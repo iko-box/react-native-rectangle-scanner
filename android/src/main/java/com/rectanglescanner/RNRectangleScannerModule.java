@@ -1,6 +1,6 @@
 package com.rectanglescanner;
 
-import com.rectanglescanner.views.MainView;
+import com.rectanglescanner.views.CameraXMainView;
 import com.facebook.react.bridge.ReactApplicationContext;
 import com.facebook.react.bridge.ReactContextBaseJavaModule;
 import com.facebook.react.bridge.ReactMethod;
@@ -9,9 +9,9 @@ import com.facebook.react.bridge.ReactMethod;
  * Created by Jake on Jan 6, 2020.
  */
 
-public class RNRectangleScannerModule extends ReactContextBaseJavaModule{
+public class RNRectangleScannerModule extends ReactContextBaseJavaModule {
 
-    public RNRectangleScannerModule(ReactApplicationContext reactContext){
+    public RNRectangleScannerModule(ReactApplicationContext reactContext) {
         super(reactContext);
     }
 
@@ -21,39 +21,39 @@ public class RNRectangleScannerModule extends ReactContextBaseJavaModule{
     }
 
     @ReactMethod
-    public void start(){
-        MainView view = MainView.getInstance();
+    public void start() {
+        CameraXMainView view = CameraXMainView.getInstance();
         view.startCamera();
     }
 
     @ReactMethod
-    public void stop(){
-        MainView view = MainView.getInstance();
+    public void stop() {
+        CameraXMainView view = CameraXMainView.getInstance();
         view.stopCamera();
     }
 
     @ReactMethod
-    public void cleanup(){
-        MainView view = MainView.getInstance();
+    public void cleanup() {
+        CameraXMainView view = CameraXMainView.getInstance();
         view.cleanupCamera();
     }
 
     @ReactMethod
-    public void refresh(){
-        MainView view = MainView.getInstance();
+    public void refresh() {
+        CameraXMainView view = CameraXMainView.getInstance();
         view.stopCamera();
         view.startCamera();
     }
 
     @ReactMethod
-    public void capture(){
-        MainView view = MainView.getInstance();
+    public void capture() {
+        CameraXMainView view = CameraXMainView.getInstance();
         view.capture();
     }
 
     @ReactMethod
     public void focus() {
-        MainView view = MainView.getInstance();
+        CameraXMainView view = CameraXMainView.getInstance();
         view.focusCamera();
     }
 }
