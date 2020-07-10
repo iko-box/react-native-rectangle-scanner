@@ -121,7 +121,6 @@ public class CameraXMainView extends ConstraintLayout {
     addViewInLayout(layout, 0, new FrameLayout.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT));
 
     viewFinder = layout.findViewById(R.id.view_finder);
-    Log.i(TAG, "CREATE");
     initializeOpenCV(context);
 
     this.cameraExecutor = Executors.newSingleThreadExecutor();
@@ -129,7 +128,6 @@ public class CameraXMainView extends ConstraintLayout {
     viewFinder.setOnHierarchyChangeListener(new OnHierarchyChangeListener() {
       @Override
       public void onChildViewAdded(View parent, View child) {
-        Log.d(TAG, "ON CHILD VIEW ADDED !!!");
         parent.measure(
                  MeasureSpec.makeMeasureSpec(getMeasuredWidth(), MeasureSpec.EXACTLY),
                  MeasureSpec.makeMeasureSpec(getMeasuredHeight(), MeasureSpec.EXACTLY)
@@ -197,7 +195,7 @@ public class CameraXMainView extends ConstraintLayout {
                   .build();
 
               imageCapture = new ImageCapture.Builder().setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
-                  .setTargetAspectRatio(screenAspectRatio).setTargetRotation(rotation).build();
+                  .setTargetAspectRatio(screenAspectRatio).setTargetRotation(Surface.ROTATION_0).build();
 
               imageAnalyzer = new ImageAnalysis.Builder().setTargetAspectRatio(screenAspectRatio)
                   .setTargetRotation(rotation).build();
@@ -248,9 +246,9 @@ public class CameraXMainView extends ConstraintLayout {
 
         @Override
         public void onCaptureSuccess(ImageProxy image) {
-          Bitmap bitmap = viewFinder.getBitmap();
+          //Bitmap bitmap = viewFinder.getBitmap();
 
-          // toBitmap(image.getImage());
+          Bitmap bitmap = imageProxyToBitmap(image);
           if (bitmap == null) {
             WritableMap bitmapError = new WritableNativeMap();
             bitmapError.putString("message", "Null Captured Image");
@@ -260,7 +258,7 @@ public class CameraXMainView extends ConstraintLayout {
 
           Mat mat = new Mat();
           Utils.bitmapToMat(bitmap, mat);
-
+          detectRectangleInFrame(mat);
           CapturedImage doc = cropImageToLatestQuadrilateral(mat);
           processedCapturedImage(doc);
           doc.release();
@@ -269,28 +267,18 @@ public class CameraXMainView extends ConstraintLayout {
     }
   }
 
-  private Bitmap toBitmap(Image image) {
-    Image.Plane[] planes = image.getPlanes();
-    ByteBuffer yBuffer = planes[0].getBuffer();
-    ByteBuffer uBuffer = planes[1].getBuffer();
-    ByteBuffer vBuffer = planes[2].getBuffer();
-
-    int ySize = yBuffer.remaining();
-    int uSize = uBuffer.remaining();
-    int vSize = vBuffer.remaining();
-
-    byte[] nv21 = new byte[ySize + uSize + vSize];
-    // U and V are swapped
-    yBuffer.get(nv21, 0, ySize);
-    vBuffer.get(nv21, ySize, vSize);
-    uBuffer.get(nv21, ySize + vSize, uSize);
-
-    YuvImage yuvImage = new YuvImage(nv21, ImageFormat.NV21, image.getWidth(), image.getHeight(), null);
-    ByteArrayOutputStream out = new ByteArrayOutputStream();
-    yuvImage.compressToJpeg(new Rect(0, 0, yuvImage.getWidth(), yuvImage.getHeight()), 75, out);
-
-    byte[] imageBytes = out.toByteArray();
-    return BitmapFactory.decodeByteArray(imageBytes, 0, imageBytes.length);
+  private Bitmap imageProxyToBitmap(ImageProxy image) {
+    ByteBuffer buffer = image.getPlanes()[0].getBuffer();
+    byte[] bytes = new byte[buffer.remaining()];
+    buffer.get(bytes);
+    Bitmap bitmap = BitmapFactory.decodeByteArray(bytes,0,bytes.length,null);
+    int rotation = image.getImageInfo().getRotationDegrees();
+    if (rotation > 0) {
+      Matrix matrix = new Matrix();
+      matrix.postRotate(rotation);
+      bitmap = Bitmap.createBitmap(bitmap, 0, 0, bitmap.getWidth(), bitmap.getHeight(), matrix, true);
+    }
+    return bitmap;
   }
 
   private void setImageAnalysis() {
@@ -298,9 +286,6 @@ public class CameraXMainView extends ConstraintLayout {
       @Override
       public void analyze(ImageProxy image) {
         // Analyzing live camera feed begins.
-
-        Log.d(TAG, "############ ANALYSYS ############");
-
         if (processorBusy) {
           Log.d(TAG, "Busy");
           return;
@@ -334,7 +319,6 @@ public class CameraXMainView extends ConstraintLayout {
       return;
 
     org.opencv.core.Size srcSize = inputRgba.size();
-    // Log.d(TAG, contours.toString());
 
     Quadrilateral detectedRectangle = getQuadrilateral(contours, srcSize);
     Bundle data = new Bundle();
@@ -425,7 +409,6 @@ public class CameraXMainView extends ConstraintLayout {
     int width = Double.valueOf(srcSize.width).intValue();
     org.opencv.core.Size size = new org.opencv.core.Size(width, height);
 
-    Log.i(TAG, "Size----->" + size);
     for (MatOfPoint c : contours) {
       MatOfPoint2f c2f = new MatOfPoint2f(c.toArray());
       double peri = Imgproc.arcLength(c2f, true);
@@ -512,18 +495,19 @@ public class CameraXMainView extends ConstraintLayout {
    * After an image is captured and cropped, this method is called
    */
   private void processedCapturedImage(CapturedImage capturedImage) {
+    // TODO remove optimization for 1 file only
+
     WritableMap pictureWasTakenConfig = new WritableNativeMap();
     WritableMap pictureWasProcessedConfig = new WritableNativeMap();
     String croppedImageFileName = null;
-    String originalImageFileName = null;
+ //   String originalImageFileName = null;
+    Mat document = capturedImage.original;
+    if (capturedImage.processed != null) {
+      document = capturedImage.processed;
+    }
     boolean hasCroppedImage = (capturedImage.processed != null);
     try {
-      originalImageFileName = generateStoredFileName("O");
-      if (hasCroppedImage) {
         croppedImageFileName = generateStoredFileName("C");
-      } else {
-        croppedImageFileName = originalImageFileName;
-      }
     } catch (Exception e) {
       WritableMap folderError = new WritableNativeMap();
       folderError.putString("message", "Failed to create the cache directory");
@@ -532,22 +516,30 @@ public class CameraXMainView extends ConstraintLayout {
     }
 
     pictureWasTakenConfig.putString("croppedImage", "file://" + croppedImageFileName);
-    pictureWasTakenConfig.putString("initialImage", "file://" + originalImageFileName);
     pictureWasProcessedConfig.putString("croppedImage", "file://" + croppedImageFileName);
-    pictureWasProcessedConfig.putString("initialImage", "file://" + originalImageFileName);
     pictureWasTaken(pictureWasTakenConfig);
 
-    if (hasCroppedImage && !this.saveToDirectory(capturedImage.processed, croppedImageFileName)) {
+    int height = Double.valueOf(document.size().height).intValue();
+    int width = Double.valueOf(document.size().width).intValue();
+    int nbPixel = height * width;
+    if (nbPixel > 1000000) {
+      // RESIZE BIG PICTURE
+      double r = Math.sqrt(((double)nbPixel) / 1000000);
+      org.opencv.core.Size size = new org.opencv.core.Size(width / r, height / r);
+      Mat resizedDocument = new Mat(size, CvType.CV_8UC4);
+      Imgproc.resize(document, resizedDocument, size);
+      if (!this.saveToDirectory(resizedDocument, croppedImageFileName)) {
+        WritableMap fileError = new WritableNativeMap();
+        fileError.putString("message", "Failed to write image to cache");
+        fileError.putString("filePath", croppedImageFileName);
+        pictureDidFailToProcess(fileError);
+        return;
+      }
+      resizedDocument.release();
+    } else if (!this.saveToDirectory(document, croppedImageFileName)) {
       WritableMap fileError = new WritableNativeMap();
-      fileError.putString("message", "Failed to write cropped image to cache");
+      fileError.putString("message", "Failed to write image to cache");
       fileError.putString("filePath", croppedImageFileName);
-      pictureDidFailToProcess(fileError);
-      return;
-    }
-    if (!this.saveToDirectory(capturedImage.original, originalImageFileName)) {
-      WritableMap fileError = new WritableNativeMap();
-      fileError.putString("message", "Failed to write original image to cache");
-      fileError.putString("filePath", originalImageFileName);
       pictureDidFailToProcess(fileError);
       return;
     }
@@ -580,8 +572,9 @@ public class CameraXMainView extends ConstraintLayout {
     doc.copyTo(endDoc);
     Core.flip(doc.t(), endDoc, 1);
     ArrayList<Integer> parameters = new ArrayList();
-    parameters.add(Imgcodecs.CV_IMWRITE_JPEG_QUALITY);
-    parameters.add((int) (this.capturedQuality * 100));
+    parameters.add(Imgcodecs.CV_IMWRITE_PNG_COMPRESSION);
+    // TODO remove fixed quality parameter
+    parameters.add(7);//(int) (this.capturedQuality * 100));
     MatOfInt par = new MatOfInt();
     par.fromList(parameters);
     boolean success = Imgcodecs.imwrite(fileName, endDoc, par);
