@@ -195,7 +195,7 @@ public class CameraXMainView extends ConstraintLayout {
                   .build();
 
               imageCapture = new ImageCapture.Builder().setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
-                  .setTargetAspectRatio(screenAspectRatio).setTargetRotation(Surface.ROTATION_0).build();
+                  .setTargetAspectRatio(screenAspectRatio).setTargetRotation(rotation).build();
 
               imageAnalyzer = new ImageAnalysis.Builder().setTargetAspectRatio(screenAspectRatio)
                   .setTargetRotation(rotation).build();
@@ -246,9 +246,8 @@ public class CameraXMainView extends ConstraintLayout {
 
         @Override
         public void onCaptureSuccess(ImageProxy image) {
-          //Bitmap bitmap = viewFinder.getBitmap();
-
-          Bitmap bitmap = imageProxyToBitmap(image);
+          Bitmap bitmap = viewFinder.getBitmap();
+          //Bitmap bitmap = toBitmap(image);
           if (bitmap == null) {
             WritableMap bitmapError = new WritableNativeMap();
             bitmapError.putString("message", "Null Captured Image");
@@ -258,27 +257,13 @@ public class CameraXMainView extends ConstraintLayout {
 
           Mat mat = new Mat();
           Utils.bitmapToMat(bitmap, mat);
-          detectRectangleInFrame(mat);
+
           CapturedImage doc = cropImageToLatestQuadrilateral(mat);
           processedCapturedImage(doc);
           doc.release();
         }
       });
     }
-  }
-
-  private Bitmap imageProxyToBitmap(ImageProxy image) {
-    ByteBuffer buffer = image.getPlanes()[0].getBuffer();
-    byte[] bytes = new byte[buffer.remaining()];
-    buffer.get(bytes);
-    Bitmap bitmap = BitmapFactory.decodeByteArray(bytes,0,bytes.length,null);
-    int rotation = image.getImageInfo().getRotationDegrees();
-    if (rotation > 0) {
-      Matrix matrix = new Matrix();
-      matrix.postRotate(rotation);
-      bitmap = Bitmap.createBitmap(bitmap, 0, 0, bitmap.getWidth(), bitmap.getHeight(), matrix, true);
-    }
-    return bitmap;
   }
 
   private void setImageAnalysis() {
@@ -495,19 +480,18 @@ public class CameraXMainView extends ConstraintLayout {
    * After an image is captured and cropped, this method is called
    */
   private void processedCapturedImage(CapturedImage capturedImage) {
-    // TODO remove optimization for 1 file only
-
     WritableMap pictureWasTakenConfig = new WritableNativeMap();
     WritableMap pictureWasProcessedConfig = new WritableNativeMap();
     String croppedImageFileName = null;
- //   String originalImageFileName = null;
-    Mat document = capturedImage.original;
-    if (capturedImage.processed != null) {
-      document = capturedImage.processed;
-    }
+    String originalImageFileName = null;
     boolean hasCroppedImage = (capturedImage.processed != null);
     try {
+      originalImageFileName = generateStoredFileName("O");
+      if (hasCroppedImage) {
         croppedImageFileName = generateStoredFileName("C");
+      } else {
+        croppedImageFileName = originalImageFileName;
+      }
     } catch (Exception e) {
       WritableMap folderError = new WritableNativeMap();
       folderError.putString("message", "Failed to create the cache directory");
@@ -516,30 +500,22 @@ public class CameraXMainView extends ConstraintLayout {
     }
 
     pictureWasTakenConfig.putString("croppedImage", "file://" + croppedImageFileName);
+    pictureWasTakenConfig.putString("initialImage", "file://" + originalImageFileName);
     pictureWasProcessedConfig.putString("croppedImage", "file://" + croppedImageFileName);
+    pictureWasProcessedConfig.putString("initialImage", "file://" + originalImageFileName);
     pictureWasTaken(pictureWasTakenConfig);
 
-    int height = Double.valueOf(document.size().height).intValue();
-    int width = Double.valueOf(document.size().width).intValue();
-    int nbPixel = height * width;
-    if (nbPixel > 1000000) {
-      // RESIZE BIG PICTURE
-      double r = Math.sqrt(((double)nbPixel) / 1000000);
-      org.opencv.core.Size size = new org.opencv.core.Size(width / r, height / r);
-      Mat resizedDocument = new Mat(size, CvType.CV_8UC4);
-      Imgproc.resize(document, resizedDocument, size);
-      if (!this.saveToDirectory(resizedDocument, croppedImageFileName)) {
-        WritableMap fileError = new WritableNativeMap();
-        fileError.putString("message", "Failed to write image to cache");
-        fileError.putString("filePath", croppedImageFileName);
-        pictureDidFailToProcess(fileError);
-        return;
-      }
-      resizedDocument.release();
-    } else if (!this.saveToDirectory(document, croppedImageFileName)) {
+    if (hasCroppedImage && !this.saveToDirectory(capturedImage.processed, croppedImageFileName)) {
       WritableMap fileError = new WritableNativeMap();
-      fileError.putString("message", "Failed to write image to cache");
+      fileError.putString("message", "Failed to write cropped image to cache");
       fileError.putString("filePath", croppedImageFileName);
+      pictureDidFailToProcess(fileError);
+      return;
+    }
+    if (!this.saveToDirectory(capturedImage.original, originalImageFileName)) {
+      WritableMap fileError = new WritableNativeMap();
+      fileError.putString("message", "Failed to write original image to cache");
+      fileError.putString("filePath", originalImageFileName);
       pictureDidFailToProcess(fileError);
       return;
     }
@@ -571,15 +547,32 @@ public class CameraXMainView extends ConstraintLayout {
     Mat endDoc = new Mat(doc.size(), CvType.CV_8UC4);
     doc.copyTo(endDoc);
     Core.flip(doc.t(), endDoc, 1);
+
+    int height = Double.valueOf(endDoc.size().height).intValue();
+    int width = Double.valueOf(endDoc.size().width).intValue();
+    int nbPixel = height * width;
+    if (nbPixel > 1000000) {
+      // RESIZE BIG PICTURE
+      double r = Math.sqrt(((double) nbPixel) / 1000000);
+      org.opencv.core.Size size = new org.opencv.core.Size(width / r, height / r);
+      Mat resizedDoc = new Mat(size, CvType.CV_8UC4);
+      Imgproc.resize(endDoc, resizedDoc, size);
+      endDoc.release();
+      endDoc = resizedDoc;
+    }
+
+    Mat bgrDoc = new Mat(endDoc.size(), CvType.CV_8UC4);
+    // Preview getBitmap gives RGB & Imgcodecs.imwrite needs BGR
+    Imgproc.cvtColor(endDoc, bgrDoc, Imgproc.COLOR_RGBA2BGRA, 4);
     ArrayList<Integer> parameters = new ArrayList();
-    parameters.add(Imgcodecs.CV_IMWRITE_PNG_COMPRESSION);
-    // TODO remove fixed quality parameter
-    parameters.add(7);//(int) (this.capturedQuality * 100));
+    parameters.add(Imgcodecs.CV_IMWRITE_JPEG_QUALITY);
+    parameters.add((int) (this.capturedQuality * 100));
     MatOfInt par = new MatOfInt();
     par.fromList(parameters);
-    boolean success = Imgcodecs.imwrite(fileName, endDoc, par);
+    boolean success = Imgcodecs.imwrite(fileName, bgrDoc, par);
 
     endDoc.release();
+    bgrDoc.release();
 
     return success;
   }
