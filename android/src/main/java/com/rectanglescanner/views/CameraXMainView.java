@@ -98,7 +98,7 @@ public class CameraXMainView extends ConstraintLayout {
   private int filterId = 1;
   private Quadrilateral lastDetectedRectangle = null;
   private String cacheFolderName = "RNRectangleScanner";
-  private double capturedQuality = 0.5;
+  private double capturedQuality = 0.7;
   protected Context mContext;
 
   public static CameraXMainView getInstance() {
@@ -239,15 +239,27 @@ public class CameraXMainView extends ConstraintLayout {
     return AspectRatio.RATIO_16_9;
   }
 
+  private Bitmap toBitmap(Image image, int rotation) {
+    Image.Plane[] planes = image.getPlanes();
+    ByteBuffer buffer = planes[0].getBuffer();
+    buffer.rewind();
+    byte[] bytes = new byte[buffer.capacity()];
+    buffer.get(bytes);
+    Bitmap bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.length);
+    Matrix matrix = new Matrix();
+    matrix.postRotate(rotation);
+    return Bitmap.createBitmap(bitmap, 0, 0, bitmap.getWidth(), bitmap.getHeight(), matrix, true);
+  }
+
   public void capture() {
     if (imageCapture != null) {
-      // new ImageCapture.OutputFileOptions.Builder()
       imageCapture.takePicture(cameraExecutor, new ImageCapture.OnImageCapturedCallback() {
 
         @Override
-        public void onCaptureSuccess(ImageProxy image) {
-          Bitmap bitmap = viewFinder.getBitmap();
-          //Bitmap bitmap = toBitmap(image);
+        public void onCaptureSuccess(ImageProxy imageProxy) {
+          int rotation = imageProxy.getImageInfo().getRotationDegrees();
+
+          Bitmap bitmap = toBitmap(imageProxy.getImage(), rotation);
           if (bitmap == null) {
             WritableMap bitmapError = new WritableNativeMap();
             bitmapError.putString("message", "Null Captured Image");
@@ -551,9 +563,9 @@ public class CameraXMainView extends ConstraintLayout {
     int height = Double.valueOf(endDoc.size().height).intValue();
     int width = Double.valueOf(endDoc.size().width).intValue();
     int nbPixel = height * width;
-    if (nbPixel > 1000000) {
+    if (nbPixel > 3000000) {
       // RESIZE BIG PICTURE
-      double r = Math.sqrt(((double) nbPixel) / 1000000);
+      double r = Math.sqrt(((double) nbPixel) / 3000000);
       org.opencv.core.Size size = new org.opencv.core.Size(width / r, height / r);
       Mat resizedDoc = new Mat(size, CvType.CV_8UC4);
       Imgproc.resize(endDoc, resizedDoc, size);
